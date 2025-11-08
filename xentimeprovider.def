@@ -1,0 +1,6 @@
+LIBRARY
+
+EXPORTS
+    TimeProvOpen    PRIVATE
+    TimeProvCommand PRIVATE
+    TimeProvClose   PRIVATE
