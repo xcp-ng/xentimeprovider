@@ -128,7 +128,8 @@ HRESULT XenTimeProvider::Update() {
         .nStratum = 0,
         .dwTSFlags = TSF_Hardware,
     };
-    FAIL_FAST_IF(wcscpy_s(sample.wszUniqueName, L"XEN"));
+    auto devicePath = _worker.GetDevicePath();
+    FAIL_FAST_IF(wcsncpy_s(sample.wszUniqueName, devicePath.c_str(), _TRUNCATE));
     _sample = sample;
 
     return S_OK;

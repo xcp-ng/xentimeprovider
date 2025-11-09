@@ -80,6 +80,11 @@ std::tuple<std::unique_lock<std::mutex>, HANDLE> XenIfaceWorker::GetDevice() {
     return std::make_tuple(std::move(lock), _device.get());
 }
 
+std::wstring XenIfaceWorker::GetDevicePath() {
+    std::lock_guard lock(_mutex);
+    return std::wstring(_devicePath);
+}
+
 _Use_decl_annotations_ DWORD CALLBACK XenIfaceWorker::CmNotifyCallback(
     HCMNOTIFICATION notifyHandle,
     PVOID context,
@@ -160,6 +165,7 @@ _Use_decl_annotations_ HRESULT XenIfaceWorker::RefreshDevices() {
     }
     _deviceListener.reset();
 
+    _devicePath.clear();
     auto [newDevice, err] = wil::try_open_file(interfaces[0].c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE);
     if (!newDevice.is_valid()) {
         auto msg = std::format(L"open({}) failed {}", interfaces[0], err);
@@ -182,6 +188,7 @@ _Use_decl_annotations_ HRESULT XenIfaceWorker::RefreshDevices() {
     RETURN_IF_CR_FAILED(cr);
 
     _device = std::move(newDevice);
+    _devicePath = interfaces[0];
 
     return S_OK;
 }

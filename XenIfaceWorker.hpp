@@ -18,6 +18,7 @@ public:
     XenIfaceWorker &operator=(const XenIfaceWorker &) = delete;
 
     std::tuple<std::unique_lock<std::mutex>, HANDLE> GetDevice();
+    std::wstring GetDevicePath();
 
     ~XenIfaceWorker();
 
@@ -44,6 +45,7 @@ private:
         _Guarded_by_(_mutex) std::list<CM_NOTIFY_ACTION> _requests;
         _Guarded_by_(_mutex) wil::unique_hcmnotification _deviceListener;
         _Guarded_by_(_mutex) wil::unique_hfile _device;
+        _Guarded_by_(_mutex) std::wstring _devicePath;
     };
     std::jthread _worker;
 };
