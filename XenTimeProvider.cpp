@@ -80,8 +80,9 @@ static HRESULT GetXenHostTime(_In_ HANDLE handle, _Out_ unsigned __int64 *xenTim
 
 HRESULT XenTimeProvider::Update() {
     _sample = std::nullopt;
-    auto [lock, handle] = _worker.GetDevice();
-    if (!handle || handle == INVALID_HANDLE_VALUE)
+    auto lock = _worker.Lock();
+    auto device = _worker.GetDevice(lock);
+    if (!device || !device->GetHandle().is_valid())
         return E_PENDING;
 
     unsigned __int64 tickCount;
@@ -94,7 +95,7 @@ HRESULT XenTimeProvider::Update() {
     RETURN_IF_FAILED(_callbacks.pfnGetTimeSysInfo(TSI_CurrentTime, &begin));
 
     unsigned __int64 xenTime, dispersion;
-    RETURN_IF_FAILED(GetXenHostTime(handle, &xenTime, &dispersion));
+    RETURN_IF_FAILED(GetXenHostTime(device->GetHandle().get(), &xenTime, &dispersion));
 
     unsigned __int64 end;
     RETURN_IF_FAILED(_callbacks.pfnGetTimeSysInfo(TSI_CurrentTime, &end));
@@ -115,8 +116,7 @@ HRESULT XenTimeProvider::Update() {
         .nStratum = 0,
         .dwTSFlags = TSF_Hardware,
     };
-    auto devicePath = _worker.LockedGetDevicePath(lock);
-    wcsncpy_s(sample.wszUniqueName, devicePath.c_str(), _TRUNCATE);
+    wcsncpy_s(sample.wszUniqueName, device->GetPath().c_str(), _TRUNCATE);
     _sample = sample;
 
     return S_OK;
