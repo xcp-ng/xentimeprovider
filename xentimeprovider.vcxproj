@@ -99,6 +99,7 @@
   <ItemGroup>
     <ClCompile Include="dllmain.cpp" />
     <ClCompile Include="guids.cpp" />
+    <ClCompile Include="Logging.cpp" />
     <ClCompile Include="XenIfaceWorker.cpp" />
     <ClCompile Include="XenTimeProvider.cpp" />
   </ItemGroup>
@@ -108,6 +109,8 @@
     <None Include="xentimeprovider.def" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="Globals.hpp" />
+    <ClInclude Include="Logging.hpp" />
     <ClInclude Include="XenIfaceWorker.hpp" />
     <ClInclude Include="xeniface_ioctls.h" />
     <ClInclude Include="XenTimeProvider.hpp" />

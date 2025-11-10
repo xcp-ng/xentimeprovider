@@ -18,7 +18,7 @@ public:
     XenIfaceWorker &operator=(const XenIfaceWorker &) = delete;
 
     std::tuple<std::unique_lock<std::mutex>, HANDLE> GetDevice();
-    _Requires_exclusive_lock_held_(_mutex) std::wstring LockedGetDevicePath(const std::unique_lock<std::mutex> &);
+    std::wstring LockedGetDevicePath(const std::unique_lock<std::mutex> &);
 
     ~XenIfaceWorker();
 

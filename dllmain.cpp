@@ -1,17 +1,24 @@
 #include <stdexcept>
 #include <system_error>
 
+#include "Globals.hpp"
+#include "Logging.hpp"
 #include "XenTimeProvider.hpp"
 
 HRESULT CALLBACK
 TimeProvOpen(_In_ PWSTR wszName, _In_ TimeProvSysCallbacks *pSysCallbacks, _Out_ TimeProvHandle *phTimeProv) {
-    if (wcscmp(XenTimeProviderName, wszName) == 0) {
+    if (CompareStringOrdinal(XenTimeProviderName, -1, wszName, -1, TRUE) == CSTR_EQUAL) {
         try {
-            *phTimeProv = new (std::nothrow) XenTimeProvider(pSysCallbacks);
-            RETURN_IF_NULL_ALLOC(*phTimeProv);
+            *phTimeProv = new XenTimeProvider(pSysCallbacks);
             return S_OK;
-        } catch (...) {
-            *phTimeProv = nullptr;
+        } catch (const std::bad_alloc &) {
+            return E_OUTOFMEMORY;
+        } catch (const std::exception &ex) {
+            TimeProvLog(
+                pSysCallbacks->pfnLogTimeProvEvent,
+                LogTimeProvEventTypeError,
+                L"unhandled TimeProvOpen error: %s",
+                ex.what());
             return E_FAIL;
         }
     } else {
@@ -21,7 +28,6 @@ TimeProvOpen(_In_ PWSTR wszName, _In_ TimeProvSysCallbacks *pSysCallbacks, _Out_
 
 HRESULT CALLBACK TimeProvCommand(_In_ TimeProvHandle hTimeProv, _In_ TimeProvCmd eCmd, _In_ TimeProvArgs pvArgs) {
     auto provider = static_cast<XenTimeProvider *>(hTimeProv);
-    FAIL_FAST_IF_NULL(provider);
 
     try {
         switch (eCmd) {
@@ -38,16 +44,30 @@ HRESULT CALLBACK TimeProvCommand(_In_ TimeProvHandle hTimeProv, _In_ TimeProvCmd
         default:
             return S_OK;
         }
-    } catch (...) {
+    } catch (const std::bad_alloc &) {
+        return E_OUTOFMEMORY;
+    } catch (const std::exception &ex) {
+        TimeProvLog(
+            provider->GetCallbacks().pfnLogTimeProvEvent,
+            LogTimeProvEventTypeError,
+            L"unhandled TimeProvCommand error: %s",
+            ex.what());
         return E_FAIL;
     }
 }
 
 HRESULT CALLBACK TimeProvClose(_In_ TimeProvHandle hTimeProv) {
+    auto provider = static_cast<XenTimeProvider *>(hTimeProv);
+    auto logger = provider ? provider->GetCallbacks().pfnLogTimeProvEvent : nullptr;
+
     try {
-        delete static_cast<XenTimeProvider *>(hTimeProv);
+        delete provider;
         return S_OK;
-    } catch (...) {
+    } catch (const std::bad_alloc &) {
+        return E_OUTOFMEMORY;
+    } catch (const std::exception &ex) {
+        if (logger)
+            TimeProvLog(logger, LogTimeProvEventTypeError, L"unhandled TimeProvClose error: %s", ex.what());
         return E_FAIL;
     }
 }

@@ -1,6 +1,8 @@
-#include "XenTimeProvider.hpp"
-
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
 #include <winioctl.h>
+
+#include "XenTimeProvider.hpp"
 
 #include "xeniface_ioctls.h"
 
@@ -8,63 +10,48 @@
 #define TIME_MS(_ms) (TIME_US((_ms) * 1000))
 #define TIME_S(_s) (TIME_MS((_s) * 1000))
 
-enum LogTimeProvEventType : WORD {
-    LogTimeProvEventTypeError = 1,
-    LogTimeProvEventTypeWarning = 2,
-    LogTimeProvEventTypeInformation = 3,
-};
-
 _Use_decl_annotations_ XenTimeProvider::XenTimeProvider(TimeProvSysCallbacks *callbacks)
     : _callbacks(*callbacks), _worker() {}
 
 _Use_decl_annotations_ HRESULT XenTimeProvider::TimeJumped(TpcTimeJumpedArgs *args) {
     UNREFERENCED_PARAMETER(args);
 
-    _callbacks.pfnLogTimeProvEvent(
-        LogTimeProvEventTypeInformation,
-        const_cast<PWSTR>(XenTimeProviderName),
-        const_cast<PWSTR>(L"XenTimeProvider::TimeJumped"));
+    Log(LogTimeProvEventTypeInformation, L"TimeJumped");
     _sample = std::nullopt;
     return S_OK;
 }
 
 _Use_decl_annotations_ HRESULT XenTimeProvider::GetSamples(TpcGetSamplesArgs *args) {
-    Update();
+    HRESULT hr = Update();
 
-    args->dwSamplesAvailable = _sample.has_value() ? 1 : 0;
-
-    args->dwSamplesReturned = 0;
-    if (args->cbSampleBuf < sizeof(TimeSample))
-        return HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER);
+    if (FAILED(hr))
+        Log(LogTimeProvEventTypeError, L"Update failed: %x", hr);
 
     if (_sample.has_value()) {
+        args->dwSamplesAvailable = 1;
+        if (args->cbSampleBuf < sizeof(TimeSample))
+            return HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER);
+
         memcpy(args->pbSampleBuf, &_sample.value(), sizeof(TimeSample));
         args->dwSamplesReturned = 1;
+    } else {
+        args->dwSamplesAvailable = args->dwSamplesReturned = 0;
     }
     return S_OK;
 }
 
 HRESULT XenTimeProvider::PollIntervalChanged() {
-    _callbacks.pfnLogTimeProvEvent(
-        LogTimeProvEventTypeInformation,
-        const_cast<PWSTR>(XenTimeProviderName),
-        const_cast<PWSTR>(L"XenTimeProvider::PollIntervalChanged"));
+    Log(LogTimeProvEventTypeInformation, L"PollIntervalChanged");
     return S_OK;
 }
 
 HRESULT XenTimeProvider::UpdateConfig() {
-    _callbacks.pfnLogTimeProvEvent(
-        LogTimeProvEventTypeInformation,
-        const_cast<PWSTR>(XenTimeProviderName),
-        const_cast<PWSTR>(L"XenTimeProvider::UpdateConfig"));
+    Log(LogTimeProvEventTypeInformation, L"UpdateConfig");
     return S_OK;
 }
 
 HRESULT XenTimeProvider::Shutdown() {
-    _callbacks.pfnLogTimeProvEvent(
-        LogTimeProvEventTypeInformation,
-        const_cast<PWSTR>(XenTimeProviderName),
-        const_cast<PWSTR>(L"XenTimeProvider::Shutdown"));
+    Log(LogTimeProvEventTypeInformation, L"Shutdown");
     return S_OK;
 }
 
@@ -129,7 +116,7 @@ HRESULT XenTimeProvider::Update() {
         .dwTSFlags = TSF_Hardware,
     };
     auto devicePath = _worker.LockedGetDevicePath(lock);
-    FAIL_FAST_IF(wcsncpy_s(sample.wszUniqueName, devicePath.c_str(), _TRUNCATE));
+    wcsncpy_s(sample.wszUniqueName, devicePath.c_str(), _TRUNCATE);
     _sample = sample;
 
     return S_OK;

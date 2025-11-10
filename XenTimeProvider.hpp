@@ -6,9 +6,8 @@
 #include <windows.h>
 #include <TimeProv.h>
 
+#include "Logging.hpp"
 #include "XenIfaceWorker.hpp"
-
-static constexpr auto XenTimeProviderName = L"XenTimeProvider";
 
 class XenTimeProvider {
 public:
@@ -24,8 +23,20 @@ public:
     HRESULT UpdateConfig();
     HRESULT Shutdown();
 
+    const TimeProvSysCallbacks &GetCallbacks() {
+        return _callbacks;
+    }
+
 private:
     HRESULT Update();
+
+    void Log(LogTimeProvEventType level, PCWSTR format, ...) {
+        va_list args;
+
+        va_start(args, format);
+        TimeProvVLog(_callbacks.pfnLogTimeProvEvent, level, format, args);
+        va_end(args);
+    }
 
     TimeProvSysCallbacks _callbacks;
     XenIfaceWorker _worker;
