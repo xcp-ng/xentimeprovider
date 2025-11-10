@@ -11,16 +11,8 @@ TimeProvOpen(_In_ PWSTR wszName, _In_ TimeProvSysCallbacks *pSysCallbacks, _Out_
         try {
             *phTimeProv = new XenTimeProvider(pSysCallbacks);
             return S_OK;
-        } catch (const std::bad_alloc &) {
-            return E_OUTOFMEMORY;
-        } catch (const std::exception &ex) {
-            TimeProvLog(
-                pSysCallbacks->pfnLogTimeProvEvent,
-                LogTimeProvEventTypeError,
-                L"unhandled TimeProvOpen error: %s",
-                ex.what());
-            return E_FAIL;
         }
+        CATCH_RETURN();
     } else {
         return HRESULT_FROM_WIN32(ERROR_NOT_SUPPORTED);
     }
@@ -44,32 +36,18 @@ HRESULT CALLBACK TimeProvCommand(_In_ TimeProvHandle hTimeProv, _In_ TimeProvCmd
         default:
             return S_OK;
         }
-    } catch (const std::bad_alloc &) {
-        return E_OUTOFMEMORY;
-    } catch (const std::exception &ex) {
-        TimeProvLog(
-            provider->GetCallbacks().pfnLogTimeProvEvent,
-            LogTimeProvEventTypeError,
-            L"unhandled TimeProvCommand error: %s",
-            ex.what());
-        return E_FAIL;
     }
+    CATCH_RETURN();
 }
 
 HRESULT CALLBACK TimeProvClose(_In_ TimeProvHandle hTimeProv) {
     auto provider = static_cast<XenTimeProvider *>(hTimeProv);
-    auto logger = provider ? provider->GetCallbacks().pfnLogTimeProvEvent : nullptr;
 
     try {
         delete provider;
         return S_OK;
-    } catch (const std::bad_alloc &) {
-        return E_OUTOFMEMORY;
-    } catch (const std::exception &ex) {
-        if (logger)
-            TimeProvLog(logger, LogTimeProvEventTypeError, L"unhandled TimeProvClose error: %s", ex.what());
-        return E_FAIL;
     }
+    CATCH_RETURN();
 }
 
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD ulReasonForCall, LPVOID lpReserved) {

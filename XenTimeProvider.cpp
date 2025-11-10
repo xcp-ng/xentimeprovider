@@ -27,12 +27,12 @@ _Use_decl_annotations_ HRESULT XenTimeProvider::GetSamples(TpcGetSamplesArgs *ar
     if (FAILED(hr))
         Log(LogTimeProvEventTypeError, L"Update failed: %x", hr);
 
-    if (_sample.has_value()) {
+    if (_sample) {
         args->dwSamplesAvailable = 1;
         if (args->cbSampleBuf < sizeof(TimeSample))
             return HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER);
 
-        memcpy(args->pbSampleBuf, &_sample.value(), sizeof(TimeSample));
+        memcpy(args->pbSampleBuf, &*_sample, sizeof(TimeSample));
         args->dwSamplesReturned = 1;
     } else {
         args->dwSamplesAvailable = args->dwSamplesReturned = 0;
@@ -80,9 +80,8 @@ static HRESULT GetXenHostTime(_In_ HANDLE handle, _Out_ unsigned __int64 *xenTim
 
 HRESULT XenTimeProvider::Update() {
     _sample = std::nullopt;
-    auto lock = _worker.Lock();
-    auto device = _worker.GetDevice(lock);
-    if (!device || !device->GetHandle().is_valid())
+    auto [lock, handle, path] = _worker.GetDevice();
+    if (!handle || handle == INVALID_HANDLE_VALUE)
         return E_PENDING;
 
     unsigned __int64 tickCount;
@@ -95,7 +94,7 @@ HRESULT XenTimeProvider::Update() {
     RETURN_IF_FAILED(_callbacks.pfnGetTimeSysInfo(TSI_CurrentTime, &begin));
 
     unsigned __int64 xenTime, dispersion;
-    RETURN_IF_FAILED(GetXenHostTime(device->GetHandle().get(), &xenTime, &dispersion));
+    RETURN_IF_FAILED(GetXenHostTime(handle, &xenTime, &dispersion));
 
     unsigned __int64 end;
     RETURN_IF_FAILED(_callbacks.pfnGetTimeSysInfo(TSI_CurrentTime, &end));
@@ -116,7 +115,7 @@ HRESULT XenTimeProvider::Update() {
         .nStratum = 0,
         .dwTSFlags = TSF_Hardware,
     };
-    wcsncpy_s(sample.wszUniqueName, device->GetPath().c_str(), _TRUNCATE);
+    wcsncpy_s(sample.wszUniqueName, path, _TRUNCATE);
     _sample = sample;
 
     return S_OK;

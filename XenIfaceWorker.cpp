@@ -19,7 +19,7 @@
     do { \
         CONFIGRET _cr = (cr); \
         if (_cr != CR_SUCCESS) { \
-            THROW_HR(CM_MapCrToWin32Err(_cr, ERROR_GEN_FAILURE)); \
+            THROW_HR(HRESULT_FROM_WIN32(CM_MapCrToWin32Err(_cr, ERROR_GEN_FAILURE))); \
         } \
     } while (0)
 
@@ -70,12 +70,13 @@ static HRESULT GetDeviceInterfaceList(
     return S_OK;
 }
 
-_Use_decl_annotations_ DWORD XenIfaceDevice::DeviceHandleCallback(
-    HCMNOTIFICATION notifyHandle,
-    PVOID context,
-    CM_NOTIFY_ACTION action,
-    PCM_NOTIFY_EVENT_DATA eventData,
-    DWORD eventDataSize) {
+_Pre_satisfies_(eventDataSize >= sizeof(CM_NOTIFY_EVENT_DATA)) DWORD CALLBACK
+    XenIfaceWorker::XenIfaceDevice::DeviceHandleCallback(
+        _In_ HCMNOTIFICATION notifyHandle,
+        _In_opt_ PVOID context,
+        _In_ CM_NOTIFY_ACTION action,
+        _In_reads_bytes_(eventDataSize) PCM_NOTIFY_EVENT_DATA eventData,
+        _In_ DWORD eventDataSize) {
     auto self = static_cast<XenIfaceDevice *>(context)->shared_from_this();
 
     UNREFERENCED_PARAMETER(notifyHandle);
@@ -91,36 +92,43 @@ _Use_decl_annotations_ DWORD XenIfaceDevice::DeviceHandleCallback(
         break;
     }
 
-    self->_worker->QueueRequest(self->_worker->Lock(), self, action);
+    self->_worker->QueueRequest(std::unique_lock(self->_worker->_mutex), self, action);
 
     return ERROR_SUCCESS;
 }
 
-XenIfaceDevice::XenIfaceDevice(wil::unique_hfile &&handle, const std::wstring &path, _In_ XenIfaceWorker *worker)
-    : _handle(handle), _path(path), _worker(worker) {
+XenIfaceWorker::XenIfaceDevice::XenIfaceDevice(
+    _In_ Private pvt,
+    _In_ wil::unique_hfile &&handle,
+    _In_ const std::wstring &path,
+    _In_ XenIfaceWorker *worker)
+    : _handle(std::move(handle)), _path(path), _worker(worker) {
+    UNREFERENCED_PARAMETER(pvt);
+
     CM_NOTIFY_FILTER filter{
         .cbSize = sizeof(CM_NOTIFY_FILTER),
         .Flags = 0,
         .FilterType = CM_NOTIFY_FILTER_TYPE_DEVICEHANDLE,
         .Reserved = 0,
-        .u = {.DeviceHandle = {.hTarget = handle.get()}},
+        .u = {.DeviceHandle = {.hTarget = _handle.get()}},
     };
     wil::unique_hcmnotification newListener;
-    auto cr = CM_Register_Notification(&filter, this, &DeviceHandleCallback, &newListener);
+    auto cr = CM_Register_Notification(&filter, this, &DeviceHandleCallback, &_listener);
     if (cr != CR_SUCCESS)
         DebugLog("CM_Register_Notification failed %x", cr);
     THROW_IF_CR_FAILED(cr);
 }
 
-HRESULT XenIfaceDevice::make(
+HRESULT XenIfaceWorker::XenIfaceDevice::make(
     _Out_ std::shared_ptr<XenIfaceDevice> &object,
     _In_ wil::unique_hfile &&handle,
     _In_ const std::wstring &path,
     _In_ XenIfaceWorker *worker) {
     try {
-        object = std::make_shared<XenIfaceDevice>(handle, path, worker);
+        object = std::make_shared<XenIfaceDevice>(Private(), std::move(handle), path, worker);
     }
     CATCH_RETURN();
+    return S_OK;
 }
 
 XenIfaceWorker::XenIfaceWorker() : _worker([this](std::stop_token stop) { WorkerFunc(stop); }) {}
@@ -131,14 +139,18 @@ XenIfaceWorker::~XenIfaceWorker() {
     _signal.notify_one();
 }
 
-std::shared_ptr<XenIfaceDevice> XenIfaceWorker::GetDevice(const std::unique_lock<std::mutex> &lock) {
-    return _active;
+std::tuple<std::unique_lock<std::mutex>, HANDLE, PCWSTR> XenIfaceWorker::GetDevice() {
+    std::unique_lock lock(_mutex);
+    if (_active)
+        return {std::move(lock), _active->GetHandle().get(), _active->GetPath().c_str()};
+    return {std::move(lock), nullptr, L""};
 }
 
 void XenIfaceWorker::QueueRequest(
     std::unique_lock<std::mutex> &&lock,
     std::shared_ptr<XenIfaceDevice> target,
     CM_NOTIFY_ACTION action) {
+    _Analysis_assume_lock_held_(_mutex);
     {
         auto _lock = std::move(lock);
         _requests.emplace_back(XenIfaceWorkerRequest{.Target = std::move(target), .Action = action});
@@ -146,12 +158,13 @@ void XenIfaceWorker::QueueRequest(
     _signal.notify_one();
 }
 
-_Use_decl_annotations_ DWORD CALLBACK XenIfaceWorker::CmListenerCallback(
-    HCMNOTIFICATION notifyHandle,
-    PVOID context,
-    CM_NOTIFY_ACTION action,
-    PCM_NOTIFY_EVENT_DATA eventData,
-    DWORD eventDataSize) {
+_Pre_satisfies_(eventDataSize >= sizeof(CM_NOTIFY_EVENT_DATA)) DWORD CALLBACK XenIfaceWorker::CmListenerCallback(
+    _In_ HCMNOTIFICATION notifyHandle,
+    _In_opt_ PVOID context,
+    _In_ CM_NOTIFY_ACTION action,
+    _In_reads_bytes_(eventDataSize) PCM_NOTIFY_EVENT_DATA eventData,
+    _In_ DWORD eventDataSize) {
+    _Analysis_assume_(context);
     auto self = static_cast<XenIfaceWorker *>(context);
 
     UNREFERENCED_PARAMETER(notifyHandle);
@@ -160,7 +173,7 @@ _Use_decl_annotations_ DWORD CALLBACK XenIfaceWorker::CmListenerCallback(
 
     {
         std::lock_guard lock(self->_mutex);
-        self->_requests.emplace_back(action);
+        self->_requests.emplace_back(XenIfaceWorkerRequest{.Action = action});
     }
     self->_signal.notify_one();
 
@@ -193,12 +206,12 @@ HRESULT XenIfaceWorker::RefreshDevices(std::list<std::shared_ptr<XenIfaceDevice>
         tombstones.emplace_back(std::move(_active));
     }
 
-    auto [newDevice, err] = wil::try_open_file(interfaces[0].c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE);
-    if (!newDevice.is_valid())
+    auto [newHandle, err] = wil::try_open_file(interfaces[0].c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE);
+    if (!newHandle.is_valid())
         DebugLog("open(%S) failed %x", interfaces[0].c_str(), err);
-    RETURN_HR_IF(HRESULT_FROM_WIN32(err), !newDevice.is_valid());
+    RETURN_HR_IF(HRESULT_FROM_WIN32(err), !newHandle.is_valid());
 
-    RETURN_IF_FAILED(XenIfaceDevice::make(_active, std::move(newDevice), interfaces[0], this));
+    RETURN_IF_FAILED(XenIfaceDevice::make(_active, std::move(newHandle), interfaces[0], this));
 
     return S_OK;
 }
